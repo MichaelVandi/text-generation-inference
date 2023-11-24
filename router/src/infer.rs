@@ -132,22 +132,96 @@ impl Infer {
         Ok((permit, response_rx.into_stream()))
     }
 
+
+    // /// Add a new request to the queue and return a InferResponse
+    // #[instrument(skip(self))]
+    // pub(crate) async fn generate(
+    //     &self,
+    //     request: GenerateRequest,
+    // ) -> Result<InferResponse, InferError> {
+    //     // Create stream and keep semaphore permit as long as generate lives
+    //     let (_permit, mut stream) = self.generate_stream(request).await?;
+
+    //     // Return values
+    //     let mut result_prefill = Vec::new();
+    //     let mut result_tokens = Vec::new();
+    //     let mut result_generated_text = None;
+    //     let mut result_start = None;
+    //     let mut result_queued = None;
+    //     let mut number_input_tokens = 0;
+
+    //     // Iterate on stream
+    //     while let Some(response) = stream.next().await {
+    //         match response? {
+    //             // Add prefill tokens
+    //             InferStreamResponse::Prefill(tokens) => {
+    //                 // Create Token objects
+    //                 // We do that here instead of in the Python code as Rust for loops are faster
+    //                 number_input_tokens = tokens.ids.len() as u32;
+    //                 result_prefill = tokens
+    //                     .ids
+    //                     .into_iter()
+    //                     .zip(tokens.logprobs.into_iter())
+    //                     .zip(tokens.texts.into_iter())
+    //                     .map(|((id, logprob), text)| PrefillToken { id, text, logprob })
+    //                     .collect();
+    //             }
+    //             // Push last token
+    //             InferStreamResponse::Token(token) => result_tokens.push(token),
+    //             // Final message
+    //             // Set return values
+    //             InferStreamResponse::End {
+    //                 token,
+    //                 generated_text,
+    //                 start,
+    //                 queued,
+    //             } => {
+    //                 result_tokens.push(token);
+    //                 result_generated_text = Some(generated_text);
+    //                 result_start = Some(start);
+    //                 result_queued = Some(queued)
+    //             }
+    //         }
+    //     }
+
+    //     // Check that we received a `InferStreamResponse::End` message
+    //     if let (Some(generated_text), Some(queued), Some(start)) =
+    //         (result_generated_text, result_queued, result_start)
+    //     {
+    //         Ok(InferResponse {
+    //             prefill: result_prefill,
+    //             tokens: result_tokens,
+    //             input_tokens: number_input_tokens,
+    //             generated_text,
+    //             queued,
+    //             start,
+    //         })
+    //     } else {
+    //         let err = InferError::IncompleteGeneration;
+    //         metrics::increment_counter!("tgi_request_failure", "err" => "incomplete");
+    //         tracing::error!("{err}");
+    //         Err(err)
+    //     }
+    // }
+
     /// Add a new request to the queue and return a InferResponse
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     pub(crate) async fn generate(
         &self,
         request: GenerateRequest,
     ) -> Result<InferResponse, InferError> {
+        let use_top_tokens = request.parameters.top_n_tokens.is_some_and(|x| x > 0);
+
         // Create stream and keep semaphore permit as long as generate lives
         let (_permit, mut stream) = self.generate_stream(request).await?;
 
         // Return values
         let mut result_prefill = Vec::new();
         let mut result_tokens = Vec::new();
+        let mut result_top_tokens = Vec::new();
         let mut result_generated_text = None;
         let mut result_start = None;
         let mut result_queued = None;
-        let mut number_input_tokens = 0;
 
         // Iterate on stream
         while let Some(response) = stream.next().await {
@@ -156,7 +230,6 @@ impl Infer {
                 InferStreamResponse::Prefill(tokens) => {
                     // Create Token objects
                     // We do that here instead of in the Python code as Rust for loops are faster
-                    number_input_tokens = tokens.ids.len() as u32;
                     result_prefill = tokens
                         .ids
                         .into_iter()
@@ -166,7 +239,10 @@ impl Infer {
                         .collect();
                 }
                 // Push last token
-                InferStreamResponse::Token(token) => result_tokens.push(token),
+                InferStreamResponse::Intermediate { token, top_tokens } => {
+                    result_tokens.push(token);
+                    result_top_tokens.push(top_tokens);
+                }
                 // Final message
                 // Set return values
                 InferStreamResponse::End {
@@ -174,8 +250,10 @@ impl Infer {
                     generated_text,
                     start,
                     queued,
+                    top_tokens,
                 } => {
                     result_tokens.push(token);
+                    result_top_tokens.push(top_tokens);
                     result_generated_text = Some(generated_text);
                     result_start = Some(start);
                     result_queued = Some(queued)
@@ -190,10 +268,14 @@ impl Infer {
             Ok(InferResponse {
                 prefill: result_prefill,
                 tokens: result_tokens,
-                input_tokens: number_input_tokens,
                 generated_text,
                 queued,
                 start,
+                top_tokens: if use_top_tokens {
+                    result_top_tokens
+                } else {
+                    Vec::new()
+                },
             })
         } else {
             let err = InferError::IncompleteGeneration;
@@ -202,6 +284,9 @@ impl Infer {
             Err(err)
         }
     }
+
+
+
     /// Add best_of new requests to the queue and return a InferResponse of the sequence with
     /// the highest log probability per token
     #[instrument(skip(self))]
