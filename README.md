@@ -86,6 +86,31 @@ or
 
 The easiest way of getting started is using the official Docker container:
 
+Install Docker following these instructions depending on your operating system. We use linux/debian: https://docs.docker.com/engine/install/debian/
+
+After installing Docker, add your user to the `docker` group by running
+```shell
+sudo usermod -aG docker $USER
+```
+Please note that you'll need to log out and log back in for these changes to take effect. After logging back in you should be able to run Docker commands without permission issues.
+
+After logging back in, install NVIDIA toolkit, configure the toolkit & install NVIDIA driver. Follow: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+
+The NVIDIA driver installation process has a few prerequisites including but not limited to:
+- Install GCC
+    - `sudo apt install build-essential`
+    - `sudo apt-get install manpages-dev`
+    - `gcc --version`
+
+- Install Linux Kernel Headers
+    - `sudo apt-get update`
+    - `sudo apt-get install linux-headers-$(uname -r)`
+
+After these prerequisites are met, you can follow: Follow: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html to install the toolkit and drivers
+
+
+After successful installation, set the args to run the TGI docker image
+
 ```shell
 model=tiiuae/falcon-7b-instruct
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
@@ -216,6 +241,14 @@ sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
 sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
 rm -f $PROTOC_ZIP
 ```
+
+Install pkg-config
+```shell
+sudo apt-get install pkg-config
+```
+
+Install OpenSSL
+
 
 On MacOS, using Homebrew:
 
